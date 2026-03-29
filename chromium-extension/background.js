@@ -20,8 +20,34 @@ const ZOTERO_HEADERS = {
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
-// Map tabId → { docId, busy, cancelled }
+// Map tabId → { docId, busy, cancelled, fieldsCache?, lastInsertedFieldId? }
 const tabState = {};
+
+// Write buffer: tabId → Array of buffered operations
+const writeBuffer = {};
+
+const BUFFERABLE_COMMANDS = new Set([
+  'Field.setCode', 'Field.setText', 'Field.delete', 'Field.removeCode',
+  'Document.setDocumentData', 'Document.setBibliographyStyle',
+]);
+
+// Commands that must see flushed state before executing
+const FLUSH_BEFORE = new Set([
+  'Document.convert', 'Document.complete',
+]);
+
+// Read commands that require a consistent view (flush pending writes first)
+const READ_COMMANDS = new Set([
+  'Document.getDocumentData', 'Document.getFields', 'Document.cursorInField',
+  'Field.getText', 'Field.getCode', 'Field.getNoteIndex',
+]);
+
+const INVALIDATES_CACHE = new Set([
+  'Document.convert', 'Document.insertField', 'Document.insertText',
+  'Document.convertPlaceholdersToFields', 'Document.setDocumentData',
+  'Document.setBibliographyStyle', 'Field.setCode', 'Field.setText',
+  'Field.delete', 'Field.removeCode',
+]);
 
 // Pending resolve/reject for the content-script command round-trip.
 // Only one transaction runs per tab at a time so a single slot is fine.
@@ -185,6 +211,73 @@ function mapToPython(command, cmdArgs) {
   }
 }
 
+function invalidateCache(tabId) {
+  if (tabState[tabId]) {
+    tabState[tabId].fieldsCache = null;
+    tabState[tabId].documentDataCache = null;
+  }
+}
+
+function bufferCommand(tabId, command, cmdArgs) {
+  if (!writeBuffer[tabId]) writeBuffer[tabId] = [];
+  const buf = writeBuffer[tabId];
+
+  switch (command) {
+    case 'Field.setCode': {
+      const [fieldID, code] = cmdArgs;
+      let entry = buf.find(e => e.type === 'field' && e.fieldID === fieldID);
+      if (!entry) { entry = { type: 'field', fieldID }; buf.push(entry); }
+      entry.code = code;
+      break;
+    }
+    case 'Field.setText': {
+      const [fieldID, text, isRich] = cmdArgs;
+      let entry = buf.find(e => e.type === 'field' && e.fieldID === fieldID);
+      if (!entry) { entry = { type: 'field', fieldID }; buf.push(entry); }
+      entry.text = text;
+      entry.isRich = isRich ?? false;
+      break;
+    }
+    case 'Field.delete': {
+      buf.push({ type: 'delete', fieldID: cmdArgs[0] });
+      break;
+    }
+    case 'Field.removeCode': {
+      buf.push({ type: 'removeCode', fieldID: cmdArgs[0] });
+      break;
+    }
+    case 'Document.setDocumentData': {
+      const idx = buf.findIndex(e => e.type === 'setDocumentData');
+      const entry = { type: 'setDocumentData', data: cmdArgs[0] };
+      if (idx >= 0) buf[idx] = entry; else buf.push(entry);
+      break;
+    }
+    case 'Document.setBibliographyStyle': {
+      const entry = {
+        type: 'setBibliographyStyle',
+        firstLineIndent: cmdArgs[0], bodyIndent: cmdArgs[1],
+        lineSpacing: cmdArgs[2], entrySpacing: cmdArgs[3],
+        tabStops: cmdArgs[4], count: cmdArgs[5],
+      };
+      const idx = buf.findIndex(e => e.type === 'setBibliographyStyle');
+      if (idx >= 0) buf[idx] = entry; else buf.push(entry);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+async function flushBuffer(tabId) {
+  const buf = writeBuffer[tabId];
+  if (!buf || buf.length === 0) return;
+  writeBuffer[tabId] = [];
+  invalidateCache(tabId);
+  await sendToContentScript(tabId, 'flushUpdates', {
+    updates: JSON.stringify(buf),
+  });
+}
+
 // ── Command result normalisation ──────────────────────────────────────────────
 
 // Zotero expects specific return shapes for each command.
@@ -308,19 +401,73 @@ async function executeCommand(tabId, docId, wpCommand) {
     }
   }
 
+  // Null fieldID substitution is already handled above; bufferable writes bypass Python
+  if (BUFFERABLE_COMMANDS.has(command)) {
+    bufferCommand(tabId, command, cmdArgs);
+    invalidateCache(tabId);
+    return null; // respond to Zotero immediately
+  }
+
+  // Flush pending writes before reads or flush-required commands
+  if (FLUSH_BEFORE.has(command) || READ_COMMANDS.has(command)) {
+    await flushBuffer(tabId);
+  }
+
+  // Cache-aware short-circuits for getFields/getDocumentData
+  if (command === 'Document.getDocumentData' && tabState[tabId]?.documentDataCache) {
+    return tabState[tabId].documentDataCache;
+  }
+  if (command === 'Document.getFields' && tabState[tabId]?.fieldsCache) {
+    return tabState[tabId].fieldsCache;
+  }
+
   const mapped = mapToPython(command, cmdArgs);
   if (!mapped) {
     console.warn(`[Zotero] Unhandled WP command: ${command}`);
     return null;
   }
 
-  // Delegate to content script → PostMessage → Python
+  // If Zotero asks for getDocumentData immediately followed by getFields, we
+  // can satisfy both with one Python call (getDocumentState) when this is the
+  // first of the pair. If Zotero ever reorders, this still works because the
+  // second call will hit cache.
+  if (command === 'Document.getDocumentData') {
+    try {
+      const raw = await sendToContentScript(tabId, 'getDocumentState', {});
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      const docData = parsed?.documentData ?? '';
+      const fields = (parsed?.fieldIDs || []).map((id, i) => ({
+        id,
+        code:      (parsed.fieldCodes  || [])[i] ?? '',
+        text:      (parsed.fieldTexts  || [])[i] ?? '',
+        noteIndex: (parsed.noteIndices || [])[i] ?? 0,
+      }));
+      tabState[tabId].documentDataCache = docData;
+      tabState[tabId].fieldsCache = fields;
+      return docData;
+    } catch (e) {
+      console.warn('[Zotero] getDocumentState failed, falling back:', e);
+      // fall through to individual call
+    }
+  }
+
   const raw = await sendToContentScript(tabId, mapped.fn, mapped.args);
   const result = normaliseResult(command, raw);
 
-  // Track the fieldID returned by insertField so Field.setCode can use it
   if (command === 'Document.insertField' && result?.id) {
     tabState[tabId].lastInsertedFieldId = result.id;
+    invalidateCache(tabId);
+  }
+
+  if (INVALIDATES_CACHE.has(command)) {
+    invalidateCache(tabId);
+  }
+
+  if (command === 'Document.getFields') {
+    tabState[tabId].fieldsCache = result;
+  }
+  if (command === 'Document.getDocumentData') {
+    tabState[tabId].documentDataCache = result;
   }
 
   return result;
@@ -367,7 +514,15 @@ async function runTransaction(tabId, zoteroCommand) {
   }
 
   const docId = tabState[tabId]?.docId ?? `collabora-${tabId}`;
-  tabState[tabId] = { docId, busy: true, cancelled: false };
+  tabState[tabId] = {
+    docId,
+    busy: true,
+    cancelled: false,
+    fieldsCache: null,
+    documentDataCache: null,
+    lastInsertedFieldId: null,
+  };
+  writeBuffer[tabId] = [];
 
   try {
     // Step 1: Start the transaction
@@ -379,7 +534,10 @@ async function runTransaction(tabId, zoteroCommand) {
 
     // Step 2: Command loop
     while (true) {
-      if (wpCommand.command === 'Document.complete') break;
+      if (wpCommand.command === 'Document.complete') {
+        await flushBuffer(tabId);
+        break;
+      }
 
       let result;
       try {
@@ -438,6 +596,8 @@ async function runTransaction(tabId, zoteroCommand) {
     if (tabState[tabId]) {
       tabState[tabId].busy = false;
       tabState[tabId].lastInsertedFieldId = null;
+      writeBuffer[tabId] = [];
+      invalidateCache(tabId);
     }
   }
 }

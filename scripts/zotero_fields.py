@@ -915,6 +915,56 @@ def getDocumentData(**_):
     return json.dumps(data)
 
 
+def getDocumentState(**_):
+    """Return document prefs + all fields in one call."""
+    doc = _doc()
+    _migrate_bookmarks(doc)
+
+    props = _udprops(doc)
+    chunks = []
+    i = 1
+    while True:
+        chunk = _read_prop(props, f"{DOC_PREFS_PROP}_{i}")
+        if chunk is None:
+            break
+        chunks.append(chunk)
+        i += 1
+    data = "".join(chunks)
+    data = re.sub(r'(<pref\s+name="fieldType"\s+value=")[^"]*(")', r'\1Http\2', data)
+    data = re.sub(r'"fieldType"\s*:\s*"[^"]*"', '"fieldType": "Http"', data)
+
+    fields = _zotero_rms_in_order(doc)
+    rms = doc.getReferenceMarks()
+    sections = doc.getTextSections()
+    ids, codes, notes, texts = [], [], [], []
+    for code, fid, name in fields:
+        try:
+            if rms.hasByName(name):
+                vis = rms.getByName(name).getAnchor().getString() or ""
+            elif sections.hasByName(name):
+                vis = _get_section_text(sections.getByName(name))
+            else:
+                vis = ""
+        except Exception:
+            vis = ""
+        if not code and not vis.strip():
+            continue
+        if code.startswith("BIBL") and not vis.strip():
+            vis = "{Bibliography}"
+        ids.append(fid)
+        codes.append(code)
+        notes.append(_note_index_for_rm(doc, name))
+        texts.append(vis)
+
+    return json.dumps({
+        "documentData": data,
+        "fieldIDs": ids,
+        "fieldCodes": codes,
+        "noteIndices": notes,
+        "fieldTexts": texts,
+    })
+
+
 def setDocumentData(data="", **_):
     """Write the Zotero document preferences string.
 
@@ -936,6 +986,111 @@ def setDocumentData(data="", **_):
         _write_prop(props, f"{DOC_PREFS_PROP}_{i}",
                     data[(i - 1) * CHUNK_SIZE : i * CHUNK_SIZE])
         i += 1
+    return json.dumps(None)
+
+
+def flushUpdates(updates=None, **_):
+    """Apply a batch of buffered operations from the extension.
+
+    Each entry has a 'type' field:
+      - 'field': {fieldID, code?, text?, isRich?} — update code and/or text
+      - 'delete': {fieldID} — delete field
+      - 'removeCode': {fieldID} — unlink field, keep text
+      - 'setDocumentData': {data} — write doc prefs
+      - 'setBibliographyStyle': {firstLineIndent, bodyIndent, lineSpacing, entrySpacing, tabStops, count}
+    """
+    import sys
+    doc = _doc()
+    if isinstance(updates, str):
+        updates = json.loads(updates)
+
+    print(f"[ZOTERO] flushUpdates: {len(updates)} operations", file=sys.stderr, flush=True)
+
+    for op in updates:
+        t = op.get("type")
+        try:
+            if t == "field":
+                fid = op["fieldID"]
+                code = op.get("code")
+                text = op.get("text")
+                is_rich = op.get("isRich", False)
+                display = _strip_html(text) if (is_rich and text) else text
+
+                obj, name, kind = _find_rm(doc, fid)
+                if not obj:
+                    continue
+
+                new_code = code if code is not None else _parse_rm(name)[0]
+
+                if kind == "rm" and _is_bibl_code(new_code):
+                    obj, name = _rm_to_section(doc, obj, name, new_code)
+                    kind = "section"
+
+                if kind == "section":
+                    _update_section(doc, obj, name, new_code, display or None)
+                else:
+                    _update_rm(doc, obj, name, new_code, display or None)
+
+            elif t == "delete":
+                obj, _, kind = _find_rm(doc, op["fieldID"])
+                if obj and kind == "section":
+                    _delete_section(doc, obj)
+                elif obj:
+                    anchor = obj.getAnchor()
+                    anchor.setString("")
+                    anchor.getText().removeTextContent(obj)
+
+            elif t == "removeCode":
+                obj, name, kind = _find_rm(doc, op["fieldID"])
+                if obj and kind == "section":
+                    try:
+                        obj.getAnchor().getText().removeTextContent(obj)
+                    except Exception:
+                        pass
+                elif obj:
+                    try:
+                        obj.getAnchor().getText().removeTextContent(obj)
+                    except Exception:
+                        pass
+
+            elif t == "setDocumentData":
+                data = op["data"]
+                data = re.sub(r'(<pref\s+name="fieldType"\s+value=")Http(")', r'\1ReferenceMark\2', data)
+                data = data.replace('"fieldType":"Http"', '"fieldType":"ReferenceMark"')
+                data = data.replace('"fieldType": "Http"', '"fieldType": "ReferenceMark"')
+                props = _udprops(doc)
+                i = 1
+                while _prop_exists(props, f"{DOC_PREFS_PROP}_{i}"):
+                    _del_prop(props, f"{DOC_PREFS_PROP}_{i}")
+                    i += 1
+                i = 1
+                while (i - 1) * CHUNK_SIZE < len(data):
+                    _write_prop(props, f"{DOC_PREFS_PROP}_{i}",
+                                data[(i - 1) * CHUNK_SIZE : i * CHUNK_SIZE])
+                    i += 1
+
+            elif t == "setBibliographyStyle":
+                styles = doc.getStyleFamilies().getByName("ParagraphStyles")
+                if styles.hasByName("Bibliography"):
+                    style = styles.getByName("Bibliography")
+
+                    def pt20_to_mm100(v):
+                        return int(v * 0.353)
+
+                    style.ParaFirstLineIndent = pt20_to_mm100(op.get("firstLineIndent", 0))
+                    style.ParaLeftMargin = pt20_to_mm100(op.get("bodyIndent", 0))
+                    ls_val = op.get("lineSpacing", 0)
+                    if ls_val > 0:
+                        from com.sun.star.style import LineSpacing, LineSpacingMode
+                        ls = LineSpacing()
+                        ls.Mode = LineSpacingMode.PROP
+                        ls.Height = ls_val
+                        style.ParaLineSpacing = ls
+                    style.ParaBottomMargin = pt20_to_mm100(op.get("entrySpacing", 0))
+
+        except Exception as e:
+            print(f"[ZOTERO] flushUpdates: op {t} failed: {e}", file=sys.stderr, flush=True)
+
     return json.dumps(None)
 
 
@@ -1215,7 +1370,8 @@ g_exportedScripts = (
     getFields, insertField, cursorInField, selectField, deleteField,
     removeFieldCode, setFields, setFieldCode, setFieldText, getFieldText,
     getFieldCode, getFieldNoteIndex,
-    getDocumentData, setDocumentData, setBibliographyStyle,
+    getDocumentData, setDocumentData, setBibliographyStyle, getDocumentState,
     insertText, convertPlaceholdersToFields, convertFields,
     exportDocument, importDocument, acquireLock, releaseLock,
+    flushUpdates,
 )

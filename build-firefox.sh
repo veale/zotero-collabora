@@ -25,8 +25,12 @@ with open('$DEST/manifest.json') as f:
 # Firefox needs a gecko add-on ID
 m['browser_specific_settings'] = {
     'gecko': {
-        'id': 'zotero-collabora@example.com',
-        'strict_min_version': '115.0'
+        'id': 'local-zotero-collabora@dev.michae.lv',
+        'strict_min_version': '115.0',
+        'data_collection_permissions': {
+            'personal_data_collected': False,
+            'required': False
+        }
     }
 }
 

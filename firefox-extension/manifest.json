@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Zotero for Collabora Online",
+  "name": "Local Zotero for Collabora",
   "version": "0.1.0",
-  "description": "Add and manage Zotero citations inside Collabora Online documents.",
+  "description": "Full Zotero desktop integration for Collabora Online. Insert, edit, and manage citations and bibliographies using the native Zotero connector protocol, producing documents fully compatible with LibreOffice.",
   "permissions": [
     "storage",
     "scripting"
@@ -36,13 +36,16 @@
   },
   "action": {
     "default_icon": "icons/icon48.png",
-    "default_title": "Zotero for Collabora Online",
+    "default_title": "Local Zotero for Collabora",
     "default_popup": "popup.html"
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "zotero-collabora@example.com",
-      "strict_min_version": "115.0"
+      "id": "local-zotero-collabora@dev.michae.lv",
+      "strict_min_version": "115.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   }
 }

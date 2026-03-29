@@ -1,4 +1,4 @@
-# Advanced Interoperable Zotero for Collabora
+# Local Zotero for Collabora
 
 A browser extension and server-side plugin that brings **full Zotero desktop integration** to Collabora Online. Insert, edit, and manage citations and bibliographies in your web browser using the same Zotero connector protocol as the native LibreOffice plugin — producing documents that are fully interchangeable between Collabora Online and LibreOffice desktop, so you can work offline and online sa you wish.
 
@@ -38,7 +38,7 @@ Nextcloud's [richdocuments](https://github.com/nextcloud/richdocuments) app incl
 | **Citation export** | CSL-JSON, BibTeX, RIS (no Zotero needed) | No |
 | **Multi-user editing** | Document-level locking during transactions | No locking |
 | **Sync with Zotero library** | Instant (local desktop) | Delayed (API sync) |
-| **Works outside Nextcloud** | Yes (any WOPI host) | No (Nextcloud only) |
+| **Works outside Nextcloud** | Yes (any WOPI host) | No (Nextcloud only, requires every user to have registered accounts, so no guests) |
 | **Group libraries** | Yes (via Zotero desktop) | Yes (via API) |
 
 ### When to use which
@@ -172,7 +172,7 @@ docker logs collabora 2>&1 | grep -i macro
 
 ### 2. Browser extension (end users)
 
-The extension will soon be available in the Chrome Web Store and Firefox Add-ons under the name **Advanced Interoperable Zotero for Collabora**. Until then, install manually:
+The extension will soon be available in the Chrome Web Store and Firefox Add-ons under the name **Local Zotero for Collabora**. Until then, install manually:
 
 #### Chrome / Chromium / Edge
 
@@ -291,4 +291,4 @@ wopi/
 
 ## Licence
 
-[TBD]
+Mozilla Public License Version 2.0
