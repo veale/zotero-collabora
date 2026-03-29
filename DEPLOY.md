@@ -10,7 +10,7 @@ Two components:
    - `zotero_export.py` — citation export (optional)
 
 2. **Browser extension** — installed in each user's Chrome/Chromium browser.
-   Load unpacked from the `extension/` directory, or package as a `.crx`.
+   Load unpacked from the `chromium-extension/` directory, or package as a `.crx`.
 
 ## 1. Docker Collabora (standalone)
 
@@ -117,7 +117,7 @@ The extension requires:
 
 1. Open `chrome://extensions/`
 2. Enable **Developer mode**
-3. Click **Load unpacked** and select the `extension/` directory
+3. Click **Load unpacked** and select the `chromium-extension/` directory
 
 ### Install (production)
 

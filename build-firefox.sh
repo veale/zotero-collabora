@@ -1,7 +1,7 @@
 #!/bin/bash
 # build-firefox.sh — Build the Firefox extension from the Chrome source.
 #
-# Copies extension/ to firefox-extension/, patches the manifest for Firefox
+# Copies chromium-extension/ to firefox-extension/, patches the manifest for Firefox
 # MV3, and strips ES module syntax (Firefox MV3 background scripts don't
 # support "type": "module").
 #
@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-SRC="extension"
+SRC="chromium-extension"
 DEST="firefox-extension"
 
 rm -rf "$DEST"

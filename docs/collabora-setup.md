@@ -38,17 +38,17 @@ default:
 | Setting                    | Default | Required |
 |----------------------------|---------|----------|
 | `enable_macros_execution`  | `false` | `true`   |
-| `macro_security_level`     | `4`     | `0`      |
+| `macro_security_level`     | `4`     | `3`      |
 
-Security level `0` (no prompt) is required because the Kit process is headless
-— any prompt-based level (1+) hangs forever waiting for user input that can
-never arrive.
+Security level `3` (High) is the most restrictive level that works. Scripts
+in trusted filesystem locations (the share directory where ours are installed)
+run normally, while unsigned macros embedded in documents are blocked.
 
 These can be set via `sed` in a Dockerfile or passed as `extra_params`:
 
 ```
 --o:security.enable_macros_execution=true
---o:security.macro_security_level=0
+--o:security.macro_security_level=3
 ```
 
 ### 3. The script files are in the right directory
@@ -69,7 +69,7 @@ services:
       - ./scripts/zotero_fields.py:/opt/collaboraoffice/share/Scripts/python/zotero_fields.py:ro
       - ./scripts/zotero_export.py:/opt/collaboraoffice/share/Scripts/python/zotero_export.py:ro
     environment:
-      - extra_params=--o:security.enable_macros_execution=true --o:security.macro_security_level=0
+      - extra_params=--o:security.enable_macros_execution=true --o:security.macro_security_level=3
 ```
 
 **Caveat:** this assumes the Python packages are already installed in the base
@@ -86,10 +86,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         collaboraofficebasis-pyuno \
     && rm -rf /var/lib/apt/lists/*
 
-# Enable macro execution (headless — must be level 0)
+# Enable macro execution (level 3 = signed + trusted locations)
 RUN COOLWSD=/etc/coolwsd/coolwsd.xml && \
     sed -i 's|<enable_macros_execution[^>]*>[^<]*</enable_macros_execution>|<enable_macros_execution desc="" type="bool" default="false">true</enable_macros_execution>|' "$COOLWSD" && \
-    sed -i 's|<macro_security_level[^>]*>[^<]*</macro_security_level>|<macro_security_level desc="" type="int" default="4">0</macro_security_level>|' "$COOLWSD"
+    sed -i 's|<macro_security_level[^>]*>[^<]*</macro_security_level>|<macro_security_level desc="" type="int" default="4">3</macro_security_level>|' "$COOLWSD"
 
 COPY scripts/zotero_fields.py scripts/zotero_export.py \
      /opt/collaboraoffice/share/Scripts/python/
