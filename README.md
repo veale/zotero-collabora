@@ -4,7 +4,7 @@ A browser extension and server-side plugin that brings **full Zotero desktop int
 
 ![2](https://github.com/user-attachments/assets/44255c78-282a-43ed-bd08-543232621d57)
 
-Think the Google Docs Zotero Plugin, but for Collabora Online.
+Think how Google Docs integration works via the Zotero Connector, but for Collabora Online.
 
 ## Key features
 
