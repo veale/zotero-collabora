@@ -20,7 +20,7 @@ const ZOTERO_HEADERS = {
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
-// Map tabId → { docId, busy, cancelled, fieldsCache?, documentDataCache?, lastInsertedFieldId? }
+// Map tabId → { docId, busy, cancelled, fieldsCache?, lastInsertedFieldId? }
 const tabState = {};
 
 // Write buffer: tabId → Array of buffered operations
@@ -401,16 +401,19 @@ async function executeCommand(tabId, docId, wpCommand) {
     }
   }
 
+  // Null fieldID substitution is already handled above; bufferable writes bypass Python
   if (BUFFERABLE_COMMANDS.has(command)) {
     bufferCommand(tabId, command, cmdArgs);
     invalidateCache(tabId);
-    return null;
+    return null; // respond to Zotero immediately
   }
 
+  // Flush pending writes before reads or flush-required commands
   if (FLUSH_BEFORE.has(command) || READ_COMMANDS.has(command)) {
     await flushBuffer(tabId);
   }
 
+  // Cache-aware short-circuits for getFields/getDocumentData
   if (command === 'Document.getDocumentData' && tabState[tabId]?.documentDataCache) {
     return tabState[tabId].documentDataCache;
   }
@@ -424,6 +427,10 @@ async function executeCommand(tabId, docId, wpCommand) {
     return null;
   }
 
+  // If Zotero asks for getDocumentData immediately followed by getFields, we
+  // can satisfy both with one Python call (getDocumentState) when this is the
+  // first of the pair. If Zotero ever reorders, this still works because the
+  // second call will hit cache.
   if (command === 'Document.getDocumentData') {
     try {
       const raw = await sendToContentScript(tabId, 'getDocumentState', {});
@@ -440,6 +447,7 @@ async function executeCommand(tabId, docId, wpCommand) {
       return docData;
     } catch (e) {
       console.warn('[Zotero] getDocumentState failed, falling back:', e);
+      // fall through to individual call
     }
   }
 

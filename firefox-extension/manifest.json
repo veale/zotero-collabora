@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Cite with Local Zotero in Collabora",
   "version": "0.1.1",
-  "description": "Full Zotero desktop integration for Collabora Online. Insert, edit, and manage citations and bibliographies using the native Zotero connector protocol, producing documents fully compatible with LibreOffice.",
+  "description": "Zotero desktop integration for Collabora Online to insert, edit, and refresh citations and bibliographies.",
   "permissions": [
     "storage",
     "scripting"
@@ -44,6 +44,7 @@
       "id": "local-zotero-collabora@dev.michae.lv",
       "strict_min_version": "115.0",
       "data_collection_permissions": {
+        "personal_data_collected": false,
         "required": ["none"]
       }
     }
