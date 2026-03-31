@@ -5,8 +5,7 @@
   "description": "Zotero desktop integration for Collabora Online to insert, edit, and refresh citations and bibliographies.",
 
   "permissions": [
-    "storage",
-    "scripting"
+    "storage"
   ],
   "host_permissions": [
     "http://127.0.0.1:23119/*",
